@@ -1,33 +1,22 @@
 use actix_web::{App, HttpServer, web};
-use dotenv;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 
 mod handlers;
 mod services;
 
-use crate::handlers::auth::{
-    SignupRequest, confirm, login, logout, otp_verify, refresh_token, reset_password, signup,
-    update_password,
-};
-use crate::handlers::products::{
-    categories as product_categories, create as product_create, delivery_options,
-    get_clothing_sizes, get_colors, get_genders, get_materials, get_products, get_shoe_sizes,
-    payment_options,
-};
-use crate::handlers::users::{categories as user_categories, create as user_create};
+use crate::handlers::auth;
+use crate::handlers::products;
+use crate::handlers::users;
 use actix_cors::Cors;
+
 use utoipa::OpenApi;
+use utoipa_actix_web::{AppExt, scope as openapi_scope};
+use utoipa_scalar::{Scalar, Servable as ScalarServable};
 use utoipa_swagger_ui::SwaggerUi;
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(
-        crate::handlers::auth::signup,
-    ),
-    components(
-        schemas(SignupRequest)
-    ),
     tags(
         (name = "Auth", description = "Register users.")
     )
@@ -49,47 +38,56 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .wrap(
-                Cors::default()
-                    .allow_any_origin() // або .allowed_origin("https://твій-домен")
-                    .allow_any_method()
-                    .allow_any_header(),
-            )
+            .into_utoipa_app()
+            .openapi(ApiDoc::openapi())
+            .map(|app| {
+                app.wrap(
+                    Cors::default()
+                        .allow_any_origin() // або .allowed_origin("https://твій-домен")
+                        .allow_any_method()
+                        .allow_any_header(),
+                )
+            })
             .app_data(web::Data::new(pool.clone()))
             .service(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-doc/openapi.json", ApiDoc::openapi()),
+                openapi_scope("/api/v1"), // openapi service register
             )
+            .openapi_service(|api| {
+                SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", api)
+            })
+            .openapi_service(|api| Scalar::with_url("/scalar", api))
+            .into_app()
+            // TODO: Should be annotated with openapi specs and moved to the openapi service register
             .service(
                 web::scope("/api/v1")
                     .service(
                         web::scope("/auth")
-                            .service(signup)
-                            .service(confirm)
-                            .service(login)
-                            .service(logout)
-                            .service(refresh_token)
-                            .service(reset_password)
-                            .service(otp_verify)
-                            .service(update_password),
+                            .service(auth::signup)
+                            .service(auth::confirm)
+                            .service(auth::login)
+                            .service(auth::logout)
+                            .service(auth::refresh_token)
+                            .service(auth::reset_password)
+                            .service(auth::otp_verify)
+                            .service(auth::update_password),
                     )
                     .service(
                         web::scope("/users")
-                            .service(user_create)
-                            .service(user_categories),
+                            .service(users::create)
+                            .service(users::categories),
                     )
                     .service(
                         web::scope("/products")
-                            .service(product_categories)
-                            .service(payment_options)
-                            .service(delivery_options)
-                            .service(product_create)
-                            .service(get_products)
-                            .service(get_colors)
-                            .service(get_shoe_sizes)
-                            .service(get_clothing_sizes)
-                            .service(get_genders)
-                            .service(get_materials),
+                            .service(products::categories)
+                            .service(products::payment_options)
+                            .service(products::delivery_options)
+                            .service(products::create)
+                            .service(products::get_products)
+                            .service(products::get_colors)
+                            .service(products::get_shoe_sizes)
+                            .service(products::get_clothing_sizes)
+                            .service(products::get_genders)
+                            .service(products::get_materials),
                     ),
             )
     })
